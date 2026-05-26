@@ -14,11 +14,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/api/v1/screen")
-@CrossOrigin(origins = "*") // Allow requests from any origin for development purposes
 public class ResumeController {
+
+    private static final Logger logger = LoggerFactory.getLogger(ResumeController.class);
 
     private final ObjectMapper objectMapper;
 
@@ -38,16 +41,34 @@ public class ResumeController {
 
     @PostMapping
     public ResponseEntity<ResumeScreenResponse> screenResume(
-            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam("jobDescription") String jobDescription) {
 
+        // Validate file
+        if (file == null) {
+            throw new IllegalArgumentException("Resume file is required");
+        }
+
         if (file.isEmpty()) {
-            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+            throw new IllegalArgumentException("Resume file cannot be empty");
+        }
+
+        // Validate job description
+        if (jobDescription == null || jobDescription.isBlank()) {
+            throw new IllegalArgumentException("Job description cannot be empty");
+        }
+
+        if (jobDescription.length() < 10 || jobDescription.length() > 5000) {
+            throw new IllegalArgumentException("Job description must be between 10 and 5000 characters");
         }
 
         try {
+            logger.info("Processing resume: {} for job description length: {}",
+                    file.getOriginalFilename(), jobDescription.length());
+
             String extractedText = FileParsingUtil.extractTextFromMultipartFile(file);
-            System.out.println("Extracted text from resume: " + extractedText.substring(0, Math.min(extractedText.length(), 500)) + "..."); // Log first 500 chars
+
+            logger.debug("Extracted text length: {}", extractedText.length());
 
             // LLM Call 1: Analyze Resume
             AIAnalysisResponse analysis = aiService.analyzeResume(extractedText, jobDescription);
@@ -86,6 +107,9 @@ public class ResumeController {
             );
             ResumeAnalysis savedAnalysis = resumeAnalysisRepository.save(resumeAnalysis);
 
+            logger.info("Resume analysis saved with ID: {}, match score: {}",
+                    savedAnalysis.getId(), analysis.getMatchScore());
+
             ResumeScreenResponse response = new ResumeScreenResponse(
                     savedAnalysis.getId(),
                     analysis.getMatchScore(),
@@ -96,10 +120,11 @@ public class ResumeController {
             return new ResponseEntity<>(response, HttpStatus.OK);
 
         } catch (IllegalArgumentException e) {
-            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+            logger.warn("Invalid input: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
-            e.printStackTrace();
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+            logger.error("Error processing resume", e);
+            throw new RuntimeException("Error processing resume", e);
         }
     }
 

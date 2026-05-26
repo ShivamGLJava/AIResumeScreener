@@ -3,6 +3,8 @@ package com.resumescreener.resumescreener.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.resumescreener.resumescreener.model.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -12,6 +14,8 @@ import reactor.core.publisher.Mono;
 
 @Service("huggingFaceAIService")
 public class HuggingFaceAIService implements AIService {
+
+    private static final Logger logger = LoggerFactory.getLogger(HuggingFaceAIService.class);
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
@@ -50,39 +54,51 @@ public class HuggingFaceAIService implements AIService {
         String cleanedResumeText = com.resumescreener.resumescreener.util.ResumeDataExtractor
                 .extractCleanResumeData(resumeText);
 
-        System.out.println("=== PRIVACY CHECK ===");
-        System.out.println("Original resume length: " + resumeText.length());
-        System.out.println("Cleaned resume length: " + cleanedResumeText.length());
+        logger.debug("Privacy check: original length={}, cleaned length={}",
+                resumeText.length(), cleanedResumeText.length());
 
         // Step 2: Extract only relevant data (skills, experience, projects)
         java.util.Map<String, Object> relevantData = com.resumescreener.resumescreener.util.ResumeDataExtractor
                 .extractRelevantData(cleanedResumeText);
 
-        System.out.println("=== EXTRACTED DATA ===");
-        System.out.println("Skills: " + relevantData.get("skills"));
-        System.out.println("Education: " + relevantData.get("education"));
-        System.out.println("Projects: " + relevantData.get("projects"));
+        logger.debug("Extracted data: skills={}, education={}, projects={}",
+                relevantData.get("skills"), relevantData.get("education"), relevantData.get("projects"));
 
         String systemPrompt = """
-                Return ONLY valid JSON.
+                You are an expert recruiter evaluating resume fit for a job position.
 
-                Do not include markdown.
-                Do not include explanations.
-                Do not include text before or after JSON.
+                Return ONLY valid JSON. No markdown, no explanations, no text before/after JSON.
+
+                MATCH SCORE CALCULATION (0-100):
+                - 90-100: Excellent match - has all required skills + relevant experience
+                - 75-89: Strong match - has most required skills + good experience
+                - 60-74: Good match - has core skills but missing some requirements
+                - 45-59: Fair match - has some relevant skills, limited experience
+                - 30-44: Partial match - some transferable skills, mostly junior
+                - 0-29: Weak match - lacks required skills/experience
+
+                IMPORTANT SCORING RULES:
+                1. Internship experience counts as professional experience
+                2. Major tech companies (Google, Amazon, Meta, Microsoft) = highly relevant
+                3. Each matched programming language = +5 to +10 points
+                4. Each matched framework/tool = +3 to +5 points
+                5. Each year of relevant experience = +3 to +5 points
+                6. Relevant certification = +5 points
+                7. Zero matched requirements = matchScore capped at 20 maximum
 
                 Required JSON format:
-
                 {
-                  "skills": [],
-                  "experience": "",
-                  "strengths": [],
-                  "weaknesses": [],
-                  "missingRequirements": [],
-                  "matchScore": 0
+                  "skills": ["skill1", "skill2"],
+                  "experience": "summary of relevant experience",
+                  "strengths": ["strength1", "strength2"],
+                  "weaknesses": ["weakness1", "weakness2"],
+                  "missingRequirements": ["requirement1", "requirement2"],
+                  "matchScore": 75
                 }
 
-                Analyze the resume against the job description.
-                Focus ONLY on technical skills, experience, education, and projects.
+                Analyze resume against job description fairly.
+                Focus on: technical skills, experience level, relevant projects, education.
+                Be generous with scoring for relevant internships and junior positions.
                 """;
 
         String userPrompt =
@@ -95,8 +111,7 @@ public class HuggingFaceAIService implements AIService {
                 RESUME_ANALYSIS_MODEL
         ).block();
 
-        System.out.println("RAW AI RESPONSE:");
-        System.out.println(responseJson);
+        logger.debug("LLM response received, parsing...");
 
         try {
             AIAnalysisResponse response = objectMapper.readValue(
@@ -109,13 +124,11 @@ public class HuggingFaceAIService implements AIService {
                     validateAnalysisResponse(response);
 
             if (!validation.isValid()) {
-                System.out.println("=== SAFETY VALIDATION FAILED ===");
-                System.out.println(validation.getSummary());
+                logger.warn("Safety validation failed: {}", validation.getSummary());
                 throw new RuntimeException("Output failed safety validation: " + validation.getSummary());
             }
 
-            System.out.println("=== SAFETY VALIDATION PASSED ===");
-            System.out.println(validation.getSummary());
+            logger.debug("Safety validation passed");
 
             return response;
 
@@ -182,8 +195,7 @@ public class HuggingFaceAIService implements AIService {
                 INTERVIEW_QUESTION_MODEL
         ).block();
 
-        System.out.println("INTERVIEW QUESTIONS RAW RESPONSE:");
-        System.out.println(responseJson);
+        logger.debug("Interview questions response received");
 
         try {
 
@@ -237,12 +249,11 @@ public class HuggingFaceAIService implements AIService {
                 com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(feedback);
 
         if (!validation.isValid()) {
-            System.out.println("=== REJECTION FEEDBACK SAFETY CHECK FAILED ===");
-            System.out.println(validation.getSummary());
+            logger.warn("Rejection feedback safety check failed: {}", validation.getSummary());
             throw new RuntimeException("Rejection feedback failed safety validation");
         }
 
-        System.out.println("=== REJECTION FEEDBACK SAFETY CHECK PASSED ===");
+        logger.debug("Rejection feedback safety check passed");
 
         return com.resumescreener.resumescreener.util.OutputSafetyValidator.sanitizeOutput(feedback);
     }
@@ -286,12 +297,11 @@ public class HuggingFaceAIService implements AIService {
                 com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(summary);
 
         if (!validation.isValid()) {
-            System.out.println("=== HR SUMMARY SAFETY CHECK FAILED ===");
-            System.out.println(validation.getSummary());
+            logger.warn("HR summary safety check failed: {}", validation.getSummary());
             throw new RuntimeException("HR summary failed safety validation");
         }
 
-        System.out.println("=== HR SUMMARY SAFETY CHECK PASSED ===");
+        logger.debug("HR summary safety check passed");
 
         return com.resumescreener.resumescreener.util.OutputSafetyValidator.sanitizeOutput(summary);
     }
@@ -302,12 +312,7 @@ public class HuggingFaceAIService implements AIService {
             String model
     ) {
 
-        System.out.println("=================================");
-        System.out.println("USING MODEL: " + model);
-        System.out.println("HF API KEY PRESENT: " +
-                (huggingFaceApiKey != null &&
-                 !huggingFaceApiKey.isBlank()));
-        System.out.println("=================================");
+        logger.debug("LLM API call initiated with model: {}", model);
 
         Message systemMessage =
                 new Message("system", systemPrompt);
@@ -339,11 +344,7 @@ public class HuggingFaceAIService implements AIService {
                         response -> response.bodyToMono(String.class)
                                 .flatMap(errorBody -> {
 
-                                    System.out.println(
-                                            "HF API ERROR RESPONSE:"
-                                    );
-
-                                    System.out.println(errorBody);
+                                    logger.error("HF API error response received");
 
                                     return Mono.error(
                                             new RuntimeException(
@@ -391,26 +392,39 @@ public class HuggingFaceAIService implements AIService {
 
                 Evaluate the candidate answers FAIRLY and OBJECTIVELY.
 
-                Return ONLY valid JSON.
+                Return ONLY valid JSON. No markdown, no explanations, no text before/after JSON.
+
+                SCORING RULES (ALL SCORES ARE 0-10):
+                - technicalScore: 0-10 (knowledge, depth, accuracy)
+                - communicationScore: 0-10 (clarity, articulation, coherence)
+                - problemSolvingScore: 0-10 (logic, approach, completeness)
+
+                SCORE INTERPRETATION:
+                - 9-10: Excellent
+                - 7-8: Very Good
+                - 5-6: Good
+                - 3-4: Fair
+                - 0-2: Poor
 
                 IMPORTANT RULES:
+                - All scores MUST be between 0 and 10 (inclusive)
                 - Score based ONLY on technical knowledge and communication
                 - Do NOT make any personal judgments or assumptions
                 - Do NOT use discriminatory language
                 - Be fair and unbiased in your evaluation
                 - Focus on the quality of answers, not the person
 
-                Required format:
+                Required JSON format:
 
                 {
-                "overallRating": "",
-                "technicalScore": 0,
-                "communicationScore": 0,
-                "problemSolvingScore": 0,
-                "evaluatorSummary": "",
-                "strengths": [],
-                "weaknesses": [],
-                "recommendation": ""
+                  "overallRating": "Very Good",
+                  "technicalScore": 8,
+                  "communicationScore": 7,
+                  "problemSolvingScore": 8,
+                  "evaluatorSummary": "Brief summary here",
+                  "strengths": ["strength1", "strength2"],
+                  "weaknesses": ["weakness1", "weakness2"],
+                  "recommendation": "Recommendation here"
                 }
                 """;
 
@@ -438,12 +452,11 @@ public class HuggingFaceAIService implements AIService {
                     validateInterviewResponse(response);
 
             if (!validation.isValid()) {
-                System.out.println("=== INTERVIEW EVALUATION SAFETY CHECK FAILED ===");
-                System.out.println(validation.getSummary());
+                logger.warn("Interview evaluation safety check failed: {}", validation.getSummary());
                 throw new RuntimeException("Interview evaluation failed safety validation");
             }
 
-            System.out.println("=== INTERVIEW EVALUATION SAFETY CHECK PASSED ===");
+            logger.debug("Interview evaluation safety check passed");
 
             return response;
 

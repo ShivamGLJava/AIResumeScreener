@@ -1,6 +1,7 @@
 package com.resumescreener.resumescreener.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.resumescreener.resumescreener.config.GlobalExceptionHandler;
 import com.resumescreener.resumescreener.model.AIAnalysisResponse;
 import com.resumescreener.resumescreener.model.InterviewEvaluationRequest;
 import com.resumescreener.resumescreener.model.InterviewEvaluationResponse;
@@ -52,7 +53,9 @@ class ResumeControllerTest {
     @BeforeEach
     void setUp() {
         this.resumeController = new ResumeController(aiService, resumeAnalysisRepository, objectMapper);
-        this.mockMvc = MockMvcBuilders.standaloneSetup(resumeController).build();
+        this.mockMvc = MockMvcBuilders.standaloneSetup(resumeController)
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
     }
 
     @Test
