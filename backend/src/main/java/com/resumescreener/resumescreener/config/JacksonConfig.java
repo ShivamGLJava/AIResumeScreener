@@ -29,6 +29,12 @@ public class JacksonConfig {
                 true
         );
 
+        // Accept single value as array (LLM might return object instead of array)
+        mapper.configure(
+                DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY,
+                true
+        );
+
         // Disable reading from source to prevent XXE
         mapper.configure(
                 com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
