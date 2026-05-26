@@ -46,6 +46,23 @@ public class HuggingFaceAIService implements AIService {
             String jobDescription
     ) {
 
+        // Step 1: Remove personal information (PII)
+        String cleanedResumeText = com.resumescreener.resumescreener.util.ResumeDataExtractor
+                .extractCleanResumeData(resumeText);
+
+        System.out.println("=== PRIVACY CHECK ===");
+        System.out.println("Original resume length: " + resumeText.length());
+        System.out.println("Cleaned resume length: " + cleanedResumeText.length());
+
+        // Step 2: Extract only relevant data (skills, experience, projects)
+        java.util.Map<String, Object> relevantData = com.resumescreener.resumescreener.util.ResumeDataExtractor
+                .extractRelevantData(cleanedResumeText);
+
+        System.out.println("=== EXTRACTED DATA ===");
+        System.out.println("Skills: " + relevantData.get("skills"));
+        System.out.println("Education: " + relevantData.get("education"));
+        System.out.println("Projects: " + relevantData.get("projects"));
+
         String systemPrompt = """
                 Return ONLY valid JSON.
 
@@ -65,10 +82,11 @@ public class HuggingFaceAIService implements AIService {
                 }
 
                 Analyze the resume against the job description.
+                Focus ONLY on technical skills, experience, education, and projects.
                 """;
 
         String userPrompt =
-                "Resume:\n" + resumeText +
+                "Resume Data (PII Removed):\n" + relevantData +
                 "\n\nJob Description:\n" + jobDescription;
 
         String responseJson = callHuggingFaceApi(
@@ -81,10 +99,25 @@ public class HuggingFaceAIService implements AIService {
         System.out.println(responseJson);
 
         try {
-            return objectMapper.readValue(
+            AIAnalysisResponse response = objectMapper.readValue(
                     responseJson,
                     AIAnalysisResponse.class
             );
+
+            // Step 3: Validate AI output for safety (hate speech, bias, etc.)
+            com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                    validateAnalysisResponse(response);
+
+            if (!validation.isValid()) {
+                System.out.println("=== SAFETY VALIDATION FAILED ===");
+                System.out.println(validation.getSummary());
+                throw new RuntimeException("Output failed safety validation: " + validation.getSummary());
+            }
+
+            System.out.println("=== SAFETY VALIDATION PASSED ===");
+            System.out.println(validation.getSummary());
+
+            return response;
 
         } catch (JsonProcessingException e) {
 
@@ -96,6 +129,21 @@ public class HuggingFaceAIService implements AIService {
                     e
             );
         }
+    }
+
+    private com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult
+            validateAnalysisResponse(AIAnalysisResponse response) {
+
+        StringBuilder outputText = new StringBuilder();
+        outputText.append(String.join(", ", response.getStrengths())).append(" ");
+        outputText.append(String.join(", ", response.getWeaknesses())).append(" ");
+        outputText.append(String.join(", ", response.getMissingRequirements())).append(" ");
+        outputText.append(response.getExperience());
+
+        com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(outputText.toString());
+
+        return validation;
     }
 
     @Override
@@ -166,17 +214,37 @@ public class HuggingFaceAIService implements AIService {
                 - Missing skills
                 - Improvement suggestions
 
+                IMPORTANT:
+                - Be respectful and constructive
+                - Do NOT use discriminatory language
+                - Do NOT make personal judgments
+                - Focus on skills and experience gaps only
+
                 Return plain text only.
                 """;
 
         String userPrompt =
                 "Resume Analysis:\n" + analysis.toString();
 
-        return callHuggingFaceApi(
+        String feedback = callHuggingFaceApi(
                 systemPrompt,
                 userPrompt,
                 RESUME_ANALYSIS_MODEL
         ).block();
+
+        // Validate and sanitize output
+        com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(feedback);
+
+        if (!validation.isValid()) {
+            System.out.println("=== REJECTION FEEDBACK SAFETY CHECK FAILED ===");
+            System.out.println(validation.getSummary());
+            throw new RuntimeException("Rejection feedback failed safety validation");
+        }
+
+        System.out.println("=== REJECTION FEEDBACK SAFETY CHECK PASSED ===");
+
+        return com.resumescreener.resumescreener.util.OutputSafetyValidator.sanitizeOutput(feedback);
     }
 
     @Override
@@ -194,6 +262,12 @@ public class HuggingFaceAIService implements AIService {
                 - Weaknesses
                 - Final recommendation
 
+                IMPORTANT:
+                - Be objective and fair
+                - Do NOT use discriminatory language
+                - Do NOT make personal judgments about the candidate
+                - Focus only on professional qualifications
+
                 Return plain text only.
                 """;
 
@@ -201,11 +275,25 @@ public class HuggingFaceAIService implements AIService {
                 "Resume Analysis:\n" + analysis.toString() +
                 "\n\nFinal Result:\n" + finalResult;
 
-        return callHuggingFaceApi(
+        String summary = callHuggingFaceApi(
                 systemPrompt,
                 userPrompt,
                 RESUME_ANALYSIS_MODEL
         ).block();
+
+        // Validate and sanitize output
+        com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(summary);
+
+        if (!validation.isValid()) {
+            System.out.println("=== HR SUMMARY SAFETY CHECK FAILED ===");
+            System.out.println(validation.getSummary());
+            throw new RuntimeException("HR summary failed safety validation");
+        }
+
+        System.out.println("=== HR SUMMARY SAFETY CHECK PASSED ===");
+
+        return com.resumescreener.resumescreener.util.OutputSafetyValidator.sanitizeOutput(summary);
     }
 
     private Mono<String> callHuggingFaceApi(
@@ -301,9 +389,16 @@ public class HuggingFaceAIService implements AIService {
         String systemPrompt = """
                 You are an expert technical interviewer.
 
-                Evaluate the candidate answers.
+                Evaluate the candidate answers FAIRLY and OBJECTIVELY.
 
                 Return ONLY valid JSON.
+
+                IMPORTANT RULES:
+                - Score based ONLY on technical knowledge and communication
+                - Do NOT make any personal judgments or assumptions
+                - Do NOT use discriminatory language
+                - Be fair and unbiased in your evaluation
+                - Focus on the quality of answers, not the person
 
                 Required format:
 
@@ -333,11 +428,24 @@ public class HuggingFaceAIService implements AIService {
                 ).block();
 
         try {
-
-            return objectMapper.readValue(
+            InterviewEvaluationResponse response = objectMapper.readValue(
                     responseJson,
                     InterviewEvaluationResponse.class
             );
+
+            // Validate interview evaluation output
+            com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                    validateInterviewResponse(response);
+
+            if (!validation.isValid()) {
+                System.out.println("=== INTERVIEW EVALUATION SAFETY CHECK FAILED ===");
+                System.out.println(validation.getSummary());
+                throw new RuntimeException("Interview evaluation failed safety validation");
+            }
+
+            System.out.println("=== INTERVIEW EVALUATION SAFETY CHECK PASSED ===");
+
+            return response;
 
         } catch (Exception e) {
 
@@ -346,5 +454,21 @@ public class HuggingFaceAIService implements AIService {
                     e
             );
         }
+    }
+
+    private com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult
+            validateInterviewResponse(InterviewEvaluationResponse response) {
+
+        StringBuilder outputText = new StringBuilder();
+        outputText.append(response.getOverallRating()).append(" ");
+        outputText.append(response.getEvaluatorSummary()).append(" ");
+        outputText.append(String.join(", ", response.getStrengths())).append(" ");
+        outputText.append(String.join(", ", response.getWeaknesses())).append(" ");
+        outputText.append(response.getRecommendation());
+
+        com.resumescreener.resumescreener.util.OutputSafetyValidator.ValidationResult validation =
+                com.resumescreener.resumescreener.util.OutputSafetyValidator.validateOutput(outputText.toString());
+
+        return validation;
     }
 }
