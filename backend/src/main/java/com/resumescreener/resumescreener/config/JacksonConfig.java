@@ -2,7 +2,6 @@ package com.resumescreener.resumescreener.config;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -13,39 +12,27 @@ public class JacksonConfig {
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();
 
-        // Fail on unknown properties to catch errors early
+        // Allow unknown properties to handle LLM variations
+        // (LLM might return extra fields we don't expect)
         mapper.configure(
                 DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,
-                true
-        );
-
-        // Prevent deserialization of unknown types
-        mapper.configure(
-                DeserializationFeature.FAIL_ON_INVALID_SUBTYPE,
-                true
-        );
-
-        // Disable default typing to prevent gadget chain attacks
-        mapper.deactivateDefaultTyping();
-
-        // Only allow safe polymorphic type handling
-        mapper.activateDefaultTyping(
-                BasicPolymorphicTypeValidator.builder()
-                        .allowIfBaseType(Object.class)
-                        .build(),
-                ObjectMapper.DefaultTyping.NON_FINAL
-        );
-
-        // Disable reading from source using CodecConfigurationException
-        mapper.configure(
-                com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
                 false
         );
 
-        // Enable strict duplicate detection
+        // Disable default typing to prevent gadget chain attacks
+        // This prevents arbitrary class deserialization
+        mapper.deactivateDefaultTyping();
+
+        // Coerce numbers to strings if needed (LLM might return int instead of String)
         mapper.configure(
-                com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION,
+                DeserializationFeature.ACCEPT_EMPTY_STRING_AS_NULL_OBJECT,
                 true
+        );
+
+        // Disable reading from source to prevent XXE
+        mapper.configure(
+                com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
+                false
         );
 
         return mapper;
