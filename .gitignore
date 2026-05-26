@@ -1,0 +1,52 @@
+# =========================
+# Environment Variables
+# =========================
+.env
+backend/.env
+frontend/.env
+
+# =========================
+# Backend - Spring Boot
+# =========================
+backend/target/
+backend/*.log
+
+# Maven Wrapper
+.mvn/
+
+# =========================
+# Frontend - React
+# =========================
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+
+# =========================
+# IDE Files
+# =========================
+.idea/
+.vscode/
+*.iml
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Coverage
+# =========================
+coverage/
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.temp
